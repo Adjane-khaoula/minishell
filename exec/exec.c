@@ -6,13 +6,16 @@
 /*   By: ntaleb <ntaleb@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/25 11:08:23 by ntaleb            #+#    #+#             */
-/*   Updated: 2022/12/17 18:52:35 by ntaleb           ###   ########.fr       */
+/*   Updated: 2022/12/20 14:07:39 by ntaleb           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "../minishell.h"
 
-int	give_birth(struct s_list_cmd *cmd);
+int		give_birth(struct s_list_cmd *cmd);
+void	init_cmd_attr(struct s_list_cmd *cmd);
+int		init_cmd_fd(struct s_list_cmd *cmd, int pipe[2],
+			int pipes[][2], int len);
 
 /**
  * steps:
@@ -47,13 +50,16 @@ int	create_child(struct s_list_cmd *cmd, int _pipe[2], int pipes[][2], int len)
 {
 	int	ret;
 
-	cmd->__builtin = get_builtin(cmd->cmds_args[0]);
-	cmd->__in_subshell = !(cmd->__builtin && !cmd->next && !cmd->prev);
-	if (cmd->__in_subshell && give_birth(cmd))
-		return (0);
-	save_stdin_stdout(cmd);
-	handle_pipe(cmd, _pipe, pipes, len);
-	ret = handle_io(cmd);
+	init_cmd_attr(cmd);
+	if (cmd->__in_subshell)
+	{
+		ret = give_birth(cmd);
+		if (ret > 0)
+			return (0);
+		else if (ret < 0)
+			return (ret);
+	}
+	ret = init_cmd_fd(cmd, _pipe, pipes, len);
 	if (ret < 0)
 	{
 		if (cmd->__in_subshell)
@@ -79,25 +85,35 @@ int	create_children(struct s_list_cmd *cmd, int pipe_count, int pipes[][2])
 	while (cmd)
 	{
 		get_pipe(pipes, pipe, &pipe_i, pipe_count);
-		create_child(cmd, pipe, pipes, pipe_count);
+		if (create_child(cmd, pipe, pipes, pipe_count) < 0)
+			return (-1);
 		cmd = cmd->next;
 		i++;
 	}
 	return (0);
 }
 
-int	wait_children(struct s_list_cmd *cmd)
+int	fetch_exit_status(struct s_list_cmd *cmd)
 {
 	int	status;
+	int	ret;
 
 	while (cmd)
 	{
-		if (!cmd->__in_subshell)
-			status = cmd->__builtin_exit_status;
-		else if (waitpid(cmd->__pid, &status, 0) > 0)
-			status = get_exit_code(status);
+		if (cmd->__in_subshell)
+		{
+			if (!cmd->__is_created)
+				return (1);
+			ret = waitpid(cmd->__pid, &status, 0);
+			while (ret < 0)
+				ret = waitpid(cmd->__pid, &status, 0);
+			if (ret >= 0)
+				status = get_exit_code(status);
+			else
+				fatal("wait", 1);
+		}
 		else
-			fatal("wait_children(wait)", 1);
+			status = cmd->__builtin_exit_status;
 		cmd = cmd->next;
 	}
 	return (status);
@@ -118,6 +134,7 @@ int	exec(struct s_list_cmd *cmd)
 	create_children(cmd, pipe_count, pipes);
 	close_unused_pipes((int [2]){-1, -1}, pipes, pipe_count);
 	free(pipes);
-	status = wait_children(cmd);
+	status = fetch_exit_status(cmd);
+	print_trailer(status);
 	return (status);
 }

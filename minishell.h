@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   minishell.h                                        :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: ntaleb <ntaleb@student.42.fr>              +#+  +:+       +#+        */
+/*   By: kadjane <kadjane@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/16 18:45:22 by kadjane           #+#    #+#             */
-/*   Updated: 2022/12/18 15:37:30 by ntaleb           ###   ########.fr       */
+/*   Updated: 2022/12/21 08:45:13 by kadjane          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -21,13 +21,28 @@
 # include <readline/readline.h>
 # include <readline/history.h>
 # include <sys/wait.h>
+# include <sys/stat.h>
+# include <limits.h>
+# include <signal.h>
+
+# define GNL_EOF (NULL)
+# define GNL_INTERRUPT ((char *)1)
 
 struct s_state {
 	char	**env;
+	char	**local;
 	int		exit_status;
+	int		readline_done;
 };
 
 extern struct s_state	g_state;
+
+typedef struct s_lexer
+{
+	char	*command_ling;
+	int		index;
+	char	c;
+}	t_lexer;
 
 typedef struct s_data
 {
@@ -45,19 +60,19 @@ typedef struct s_data
 	int		sign_for_ambiguous;
 	int		nbr_arg;
 	int		index;
-}	t_data;
+	char	*buff;
+	char	*ling;
+	int		n;
+	t_lexer	*lexer;
 
-typedef struct s_lexer
-{
-	char	*command_ling;
-	int		index;
-	char	c;
-}	t_lexer;
+}	t_data;
 
 typedef struct s_token
 {
 	enum
 	{
+		TOKEN_AMBIGUOUS_REDIRECTION,
+		TOKEN_WORD,
 		TOKEN_REDI_OUTPUT,
 		TOKEN_FILE_OUT,
 		TOKEN_APPAND,
@@ -66,14 +81,13 @@ typedef struct s_token
 		TOKEN_FILE_INP,
 		TOKEN_HERDOC,
 		TOKEN_FILE_HERDOC,
-		TOKEN_WORD,
 		TOKEN_PIPE,
 	} e_type;
 	char	*val;
 }	t_token;
 
-struct	s_list_cmd;
-typedef int	(*t_builtin)(struct s_list_cmd *);
+struct					s_list_cmd;
+typedef int				(*t_builtin)(struct s_list_cmd *);
 
 typedef struct s_list_token
 {
@@ -93,7 +107,6 @@ typedef struct s_list_cmd
 	char						**cmds_args;
 	t_list_io_stream			*io;
 	struct s_list_cmd			*next;
-
 	struct s_list_cmd			*prev;
 	pid_t						__pid;
 	t_builtin					__builtin;
@@ -101,6 +114,7 @@ typedef struct s_list_cmd
 	int							__builtin_stdin;
 	int							__builtin_stdout;
 	int							__in_subshell;
+	int							__is_created;
 }	t_list_cmd;
 
 char				*ft_strjoin2(char *string, char c, t_lexer *lexer);
@@ -118,6 +132,11 @@ int					ft_strncmp(char *s1, char *s2, size_t n);
 void				*ft_calloc(size_t count, size_t size);
 char				*ft_itoa(int n);
 void				*ft_memset(void *dest, int v, size_t len);
+int					ft_search(char *ligne);
+char				*ft_ligne(char *buff, int position, int n);
+char				*ft_save(char *save, int n);
+char				*ft_get_line(char *ligne, char **save, int n);
+char				*get_next_line(int fd, t_data **data);
 
 char				*ft_strchr(char *s, int c);
 size_t				ft_strlcpy(char *dst, char *src, size_t size);
@@ -184,7 +203,7 @@ t_list_cmd			*get_list_cmd(t_list_token **list_token,
 void				add_node_cmd(t_list_cmd **list_cmds, t_list_cmd *new_cmd);
 void				init_node(t_list_cmd **new_cmd);
 t_list_cmd			*node_list(t_list_token **list_token,
-						t_lexer *lexer, t_data **data);
+						t_lexer *lexer, t_data **data, t_list_cmd **list_cmd);
 int					nbr_args(t_list_token *list_token);
 
 char				*ft_expand_herdoc(char *string_join,
@@ -193,8 +212,6 @@ void				remove_space(char **word);
 void				ft_find_space(char **word, t_list_token **list_token,
 						t_data **data);
 int					nbr_word(char *str);
-int					len_list(t_list_token **list_cmd);
-int					is_token_2(int type_token);
 void				find_space_in_word(char **word, t_data **data);
 t_list_token		*end_list(t_list_token **list_token);
 void				check_space_in_word(char **word, t_list_token *tmp,
@@ -203,11 +220,11 @@ int					found_quote(t_lexer *lexer);
 
 int					check_quote_pipe(t_list_token **list_token);
 int					check_token(t_list_token **list_token);
-int					check_ambiguous(t_list_token **list_token, t_data **data);
-int					check_redirection(t_list_token **list_token, t_data **data);
+int					check_redirection(t_list_token **list_token);
 int					is_token_2(int type_token);
 
-char				*ft_herdoc(char *eof, t_data **data, t_lexer *lexer);
+char				*ft_herdoc(char *eof, t_data **data, t_lexer *lexer,
+						t_list_cmd **list_cmd);
 void				ft_herdoc_2(char **ret_expand, char **string_join,
 						char **string_inp, t_data **data);
 void				ft_herdoc_3(char **string_inp, t_data **data);
@@ -224,7 +241,12 @@ void				fatal(char *msg, int status);
 int					count_processes(struct s_list_cmd *cmd);
 int					get_append_flag(struct s_list_io_stream *io);
 int					arr_size(char **path);
-void				init_prev(struct s_list_cmd *cmd);
+char				**get_entry_location(char *addr, char **arr);
+void				__set_local(char *name);
+int					__unset_local(char *name);
+char				*get_local(char *name);
+
+int					init_shell(void);
 
 void				handle_signals(void);
 
@@ -233,7 +255,11 @@ char				*get_env(char *name);
 void				print_env(int export_mode);
 int					valid_env_name(char *var);
 int					unset_env(char *name);
+void				__set_env(char *name, char *value);
+int					__unset_env(char *name);
 int					set_env(char *name_value);
+int					valid_env_name(char *var);
+void				init_prev(struct s_list_cmd *cmd);
 
 void				init_pipes(int count, int pipes[][2]);
 void				get_pipe(int pipes[][2], int pipe[2],
@@ -242,6 +268,8 @@ void				close_unused_pipes(int pipe[2], int pipes[][2], int len);
 
 t_builtin			get_builtin(char *cmd);
 int					find_exec(char *exec, char **full_path);
+
+int					arg_equal_flag(char *arg, char flag);
 
 void				handle_pipe(struct s_list_cmd *cmd,
 						int pipe[2], int pipes[][2], int len);
@@ -254,6 +282,16 @@ int					create_child(struct s_list_cmd *cmd, int _pipe[2],
 int					create_children(struct s_list_cmd *cmd,
 						int pipe_count, int pipes[][2]);
 int					get_exit_code(int status);
-int					wait_children(struct s_list_cmd *cmd);
+int					fetch_exit_status(struct s_list_cmd *cmd);
+void				print_trailer(int exit_status);
 int					exec(struct s_list_cmd *cmd);
+void				free_all_data(t_data **data, t_list_token **list_token,
+						t_list_cmd **list_cmds, t_lexer **input_commands);
+int					is_cmd_whitespaces(char *str);
+int					ft_error(t_list_token *list_token);
+void				fill_and_execute(t_lexer **input_commands,
+						t_list_token **list_token,
+						t_list_cmd **list_cmds, t_data **data);
+void				free_list_inp_out_file(t_list_io_stream **inpt_out_file);
+void				free_if_ctl_c(t_list_cmd **new_cmd);
 #endif
